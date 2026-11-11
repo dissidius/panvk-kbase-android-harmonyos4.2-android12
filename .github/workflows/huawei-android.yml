@@ -17,6 +17,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   android:
@@ -24,7 +25,14 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Probe published reusable H42 builder image
+        id: builder
+        continue-on-error: true
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull ghcr.io/dissidius/panvk-h42-builder:llvm18-v1
       - name: Restore Ubuntu and Python dependency cache
+        if: steps.builder.outcome != 'success'
         id: deps
         uses: actions/cache/restore@v4
         with:
@@ -40,10 +48,11 @@ jobs:
           restore-keys: |
             h42-ccache-v1-${{ runner.os }}-
       - name: Reuse cached tools, install only missing dependencies
+        if: steps.builder.outcome != 'success'
         timeout-minutes: 7
         run: bash ci/h42-setup.sh
       - name: Save prepared dependency cache
-        if: success() && steps.deps.outputs.cache-hit != 'true'
+        if: success() && steps.builder.outcome != 'success' && steps.deps.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -68,7 +77,13 @@ jobs:
       - name: Apply PanVK source patches
         timeout-minutes: 4
         run: ./scripts/apply-patches.sh --profile g615-v11-csf
+      - name: Build with published H42 compiler image
+        if: steps.builder.outcome == 'success'
+        timeout-minutes: 27
+        run: |
+          bash ci/h42-in-container.sh bash -c 'PANVK_JOBS=4 ./scripts/build-android.sh --profile g615-v11-csf --ndk "$ANDROID_HOME/ndk/29.0.14206865"'
       - name: Build Android arm64 PanVK
+        if: steps.builder.outcome != 'success'
         env:
           CC: clang-18
           CXX: clang++-18
