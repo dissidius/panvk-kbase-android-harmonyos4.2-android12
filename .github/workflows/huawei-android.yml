@@ -4,8 +4,13 @@ on:
     paths:
       - 'patches/kbase-common/files/src/panfrost/lib/kmod/kbase_kmod.c'
       - 'patches/csf-v11/**'
+      - 'scripts/apply-patches.sh'
       - '.github/workflows/huawei-android.yml'
   workflow_dispatch:
+
+concurrency:
+  group: zenithblue-harmony42-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -13,16 +18,18 @@ permissions:
 jobs:
   android:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: Install Linux host dependencies
+      - name: Install Linux host dependencies (fast network check)
+        timeout-minutes: 3
         run: |
           # Avoid the runner's Azure mirror (known intermittent DNS failures)
           # and fail promptly if package downloads cannot reach Ubuntu.
           sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu|g; s|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
-          sudo apt-get update -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o APT::Update::Error-Mode=any
-          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=1 -o Acquire::http::Timeout=20 \
+          timeout 8s getent hosts archive.ubuntu.com >/dev/null || { echo 'CI-NETWORK: Ubuntu DNS unavailable on runner'; exit 2; }
+          timeout 45s sudo apt-get update -o Acquire::Retries=0 -o Acquire::http::Timeout=8 -o APT::Update::Error-Mode=any
+          timeout 100s sudo apt-get install -y --no-install-recommends -o Acquire::Retries=0 -o Acquire::http::Timeout=8 \
             build-essential git cmake pkg-config ninja-build glslang-tools \
             llvm-18-dev clang-18 libclang-18-dev libclc-18-dev \
             libllvmspirvlib-18-dev spirv-tools python3-venv python3-pip \
@@ -64,7 +71,7 @@ jobs:
           cat > "$ROOT/meta.json" <<'EOF'
           {
             "schemaVersion": 1,
-            "name": "PanVK Huawei Kirin 990 Compatibility (experimental)",
+            "name": "Zenithblue Universal PanVK Huawei Test (experimental)",
             "author": "dissidius",
             "packageVersion": "0.0.1",
             "driverVersion": "Mesa 26.3.0-devel",
