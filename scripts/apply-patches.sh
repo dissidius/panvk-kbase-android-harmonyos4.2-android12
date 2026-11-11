@@ -59,5 +59,6 @@ done
 if [ "$PROFILE" = "g615-v11-csf" ]; then
   python3 "$ROOT/scripts/apply-huawei-import32.py" \
     "$MESA/src/panfrost/lib/kmod/kbase_kmod.c"
+  python3 "$ROOT/scripts/apply-h42-cmd-pool.py" "$MESA"
 fi
 echo "OK applied=$APPLIED profile=$PROFILE"
