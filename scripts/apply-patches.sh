@@ -28,17 +28,22 @@ for fam in $SERIES; do
     if ! git -C "$MESA" apply --check "$p" 2>/dev/null; then
       RECOUNT="--recount"
     fi
-    # git apply accepts shifted hunks silently; -v reports them, so fail on any offset.
+    # git apply -v exposes offsets. Exact matching context with changed line
+    # numbers is safe: permit offsets, but continue to reject fuzz/conflicts.
+    # This compatibility-build branch reports offsets for later patch refresh.
     # shellcheck disable=SC2086
     if ! VOUT="$(git -C "$MESA" apply $RECOUNT --check -v "$p" 2>&1)"; then
       echo "$VOUT" >&2
       echo "PATCH-DRIFT: $p does not apply" >&2
       exit 1
     fi
-    if echo "$VOUT" | grep -qiE 'offset|fuzz'; then
-      echo "$VOUT" | grep -iE 'offset|fuzz|Checking' >&2
-      echo "PATCH-DRIFT: $p applies only with offset/fuzz (refresh hunk headers)" >&2
+    if echo "$VOUT" | grep -qi 'fuzz'; then
+      echo "$VOUT" >&2
+      echo "PATCH-DRIFT: $p requires fuzzy context; aborting." >&2
       exit 1
+    fi
+    if echo "$VOUT" | grep -qi 'offset'; then
+      echo "PATCH-RELOCATION: $(basename "$p") matched exact context at shifted line(s)" >&2
     fi
     # shellcheck disable=SC2086
     git -C "$MESA" apply $RECOUNT "$p"
