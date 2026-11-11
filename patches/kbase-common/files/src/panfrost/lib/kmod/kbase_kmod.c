@@ -1484,7 +1484,51 @@ kbase_kmod_import_dmabuf(struct pan_kmod_dev *dev,
       },
    };
 
-   if (ioctl(dev->fd, KBASE_IOCTL_MEM_IMPORT, &req)) {
+   int import_ret = ioctl(dev->fd, KBASE_IOCTL_MEM_IMPORT, &req);
+
+   /*
+    * Older Huawei job-manager kbase drivers (including Kirin 990 on
+    * HarmonyOS 4.2) encode a 32-byte MEM_IMPORT payload in ioctl nr 22.
+    * The standard 24-byte request returns ENOTTY on those kernels.
+    *
+    * Retry only for job-manager devices and only on ENOTTY. Do not change
+    * the normal path or the CSF path used by newer Mali GPUs.
+    */
+   if (import_ret < 0 && errno == ENOTTY && !kbase_dev->is_csf) {
+      union {
+         struct {
+            uint64_t flags;
+            uint64_t phandle;
+            uint32_t type;
+            uint32_t padding;
+            uint64_t reserved;
+         } in;
+         struct {
+            uint64_t flags;
+            uint64_t gpu_va;
+            uint64_t va_pages;
+            uint64_t reserved;
+         } out;
+      } legacy;
+      _Static_assert(sizeof(legacy) == 32,
+                     "Huawei JM MEM_IMPORT request must be 32 bytes");
+
+      memset(&legacy, 0, sizeof(legacy));
+      legacy.in.flags = req.in.flags;
+      legacy.in.phandle = req.in.phandle;
+      legacy.in.type = req.in.type;
+      legacy.in.padding = req.in.padding;
+      import_ret = ioctl(dev->fd,
+                         _IOWR(KBASE_IOCTL_TYPE, 22, __typeof__(legacy)),
+                         &legacy);
+      if (import_ret == 0) {
+         req.out.flags = legacy.out.flags;
+         req.out.gpu_va = legacy.out.gpu_va;
+         req.out.va_pages = legacy.out.va_pages;
+      }
+   }
+
+   if (import_ret < 0) {
       mesa_loge("kbase: KBASE_IOCTL_MEM_IMPORT failed: %s", strerror(errno));
       goto err_close_dmabuf;
    }
