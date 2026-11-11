@@ -1,14 +1,24 @@
 name: build
 on: [push, pull_request]
+
+concurrency:
+  group: zenithblue-h42-validate-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - name: Verify sources.lock pinned
         run: python3 -c "import json;d=json.load(open('sources.lock'));assert len(d['mesaCommit'])==40,d"
-      - name: Fetch exact Mesa
-        run: ./scripts/fetch-mesa.sh
+      - name: Fetch exact Mesa (bounded network)
+        timeout-minutes: 3
+        run: |
+          set -e
+          timeout 8s getent hosts gitlab.freedesktop.org >/dev/null || { echo "CI-NETWORK: GitLab Mesa source DNS is unavailable"; exit 2; }
+          timeout 150s ./scripts/fetch-mesa.sh
       - name: Verify patch applicability (g615-v11-csf)
         run: ./scripts/apply-patches.sh --profile g615-v11-csf
       - name: Capture upstream matrix
