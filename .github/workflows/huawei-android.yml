@@ -28,7 +28,9 @@ jobs:
           .ci-venv/bin/pip install 'meson>=1.4.0,<2' mako packaging pyyaml
           echo "$GITHUB_WORKSPACE/.ci-venv/bin" >> "$GITHUB_PATH"
           echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
-      - uses: android-actions/setup-android@v3
+      # GitHub-hosted Ubuntu runners already include Android SDK cmdline tools.
+      # Avoid setup-android@v3: its legacy "sdkmanager tools" call fails on
+      # newer SDK repositories because the obsolete "tools" package was removed.
       - name: Install Android NDK r29
         run: sdkmanager --install 'ndk;29.0.14206865'
       - name: Fetch pinned Mesa and apply PanVK patches
