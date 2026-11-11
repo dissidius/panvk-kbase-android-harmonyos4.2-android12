@@ -5,6 +5,9 @@ on:
       - 'patches/kbase-common/files/src/panfrost/lib/kmod/kbase_kmod.c'
       - 'patches/csf-v11/**'
       - 'scripts/apply-patches.sh'
+      - 'scripts/fetch-mesa.sh'
+      - 'scripts/apply-huawei-import32.py'
+      - 'ci/**'
       - '.github/workflows/huawei-android.yml'
   workflow_dispatch:
 
@@ -21,39 +24,50 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: Install Linux host dependencies (fast network check)
+      - name: Restore Ubuntu and Python dependency cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .ci-apt
+            .ci-venv
+          key: h42-deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/h42-apt.txt', 'ci/h42-python.txt') }}
+      - name: Restore incremental compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci-ccache
+          key: h42-ccache-v1-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            h42-ccache-v1-${{ runner.os }}-
+      - name: Reuse cached tools, install only missing dependencies
+        timeout-minutes: 7
+        run: bash ci/h42-setup.sh
+      - name: Save prepared dependency cache
+        if: success() && steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .ci-apt
+            .ci-venv
+          key: h42-deps-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/h42-apt.txt', 'ci/h42-python.txt') }}
+      - name: Restore pinned Mesa source cache
+        id: mesa
+        uses: actions/cache/restore@v4
+        with:
+          path: work/mesa
+          key: h42-mesa-source-v1-${{ runner.os }}-${{ hashFiles('sources.lock') }}
+      - name: Fetch exact Mesa (offline when cached)
+        timeout-minutes: 3
+        run: ./scripts/fetch-mesa.sh
+      - name: Save pinned Mesa source before patching
+        if: success() && steps.mesa.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: work/mesa
+          key: h42-mesa-source-v1-${{ runner.os }}-${{ hashFiles('sources.lock') }}
+      - name: Apply PanVK source patches
         timeout-minutes: 4
-        run: |
-          # Avoid the runner's Azure mirror (known intermittent DNS failures)
-          # and fail promptly if package downloads cannot reach Ubuntu.
-          sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors.txt|https://mirrors.mit.edu/ubuntu|g; s|http://azure.archive.ubuntu.com/ubuntu|https://mirrors.mit.edu/ubuntu|g; s|http://archive.ubuntu.com/ubuntu|https://mirrors.mit.edu/ubuntu|g; s|https://security.ubuntu.com/ubuntu|https://mirrors.mit.edu/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
-          timeout 8s getent hosts mirrors.mit.edu >/dev/null || { echo 'CI-NETWORK: Ubuntu DNS unavailable on runner'; exit 2; }
-          timeout 90s sudo apt-get update -o Acquire::Languages=none -o Acquire::Retries=0 -o Acquire::http::Timeout=8 -o Acquire::https::Timeout=8 -o APT::Update::Error-Mode=any
-          sudo apt-cache policy build-essential libclc-18-dev | head -n 30
-          timeout 100s sudo apt-get install -y --no-install-recommends -o Acquire::Retries=0 -o Acquire::http::Timeout=8 \
-            build-essential git cmake pkg-config ninja-build glslang-tools \
-            llvm-18-dev clang-18 libclang-18-dev libclc-18-dev \
-            libllvmspirvlib-18-dev spirv-tools python3-venv python3-pip \
-            python3-mako python3-packaging python3-yaml libdrm-dev
-          python3 -m venv .ci-venv
-          .ci-venv/bin/pip install 'meson>=1.4.0,<2' mako packaging pyyaml
-          echo "$GITHUB_WORKSPACE/.ci-venv/bin" >> "$GITHUB_PATH"
-          echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
-      # GitHub-hosted Ubuntu runners already include Android SDK cmdline tools.
-      # Avoid setup-android@v3: its legacy "sdkmanager tools" call fails on
-      # newer SDK repositories because the obsolete "tools" package was removed.
-      - name: Install Android NDK r29
-        run: |
-          set -euo pipefail
-          SDKMANAGER="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -type f -name sdkmanager | sort -Vr | head -n 1)"
-          test -x "$SDKMANAGER"
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install 'ndk;29.0.14206865'
-      - name: Fetch pinned Mesa and apply PanVK patches
-        run: |
-          set -euo pipefail
-          ./scripts/fetch-mesa.sh
-          ./scripts/apply-patches.sh --profile g615-v11-csf
+        run: ./scripts/apply-patches.sh --profile g615-v11-csf
       - name: Build Android arm64 PanVK
         env:
           CC: clang-18
@@ -64,6 +78,15 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/build-android.sh --profile g615-v11-csf --ndk "$ANDROID_HOME/ndk/29.0.14206865"
+      - name: Report compiler cache hits
+        if: always()
+        run: command -v ccache >/dev/null 2>&1 && ccache --show-stats || true
+      - name: Save incremental compiler cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-ccache
+          key: h42-ccache-v1-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Package experimental driver ZIP
         run: |
           set -euo pipefail
