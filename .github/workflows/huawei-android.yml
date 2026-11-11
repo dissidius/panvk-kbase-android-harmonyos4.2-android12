@@ -1,0 +1,84 @@
+name: Build experimental Huawei PanVK Android ZIP
+on:
+  push:
+    paths:
+      - 'patches/kbase-common/files/src/panfrost/lib/kmod/kbase_kmod.c'
+      - '.github/workflows/huawei-android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux host dependencies
+        run: |
+          sudo add-apt-repository -y universe
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git cmake pkg-config ninja-build glslang-tools \
+            llvm-18-dev clang-18 libclang-18-dev libclc-18-dev \
+            libllvmspirvlib-18-dev spirv-tools python3-venv python3-pip \
+            python3-mako python3-packaging python3-yaml libdrm-dev
+          python3 -m venv .ci-venv
+          .ci-venv/bin/pip install 'meson>=1.4.0,<2' mako packaging pyyaml
+          echo "$GITHUB_WORKSPACE/.ci-venv/bin" >> "$GITHUB_PATH"
+          echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
+      - uses: android-actions/setup-android@v3
+      - name: Install Android NDK r29
+        run: sdkmanager --install 'ndk;29.0.14206865'
+      - name: Fetch pinned Mesa and apply PanVK patches
+        run: |
+          set -euo pipefail
+          ./scripts/fetch-mesa.sh
+          ./scripts/apply-patches.sh --profile g615-v11-csf
+      - name: Build Android arm64 PanVK
+        env:
+          CC: clang-18
+          CXX: clang++-18
+          LLVM_CONFIG: llvm-config-18
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/29.0.14206865
+          PANVK_JOBS: 4
+        run: |
+          set -euo pipefail
+          ./scripts/build-android.sh --profile g615-v11-csf --ndk "$ANDROID_HOME/ndk/29.0.14206865"
+      - name: Package experimental driver ZIP
+        run: |
+          set -euo pipefail
+          ROOT="dist/android-g615-v11-csf"
+          test -s "$ROOT/libvulkan_panfrost.so"
+          cat > "$ROOT/meta.json" <<'EOF'
+          {
+            "schemaVersion": 1,
+            "name": "PanVK Huawei Kirin 990 Compatibility (experimental)",
+            "author": "dissidius",
+            "packageVersion": "0.0.1",
+            "driverVersion": "Mesa 26.3.0-devel",
+            "minApi": 31,
+            "description": "Experimental 32-byte Huawei JM MEM_IMPORT ENOTTY fallback; not device-validated",
+            "libraryName": "libvulkan_panfrost.so"
+          }
+          EOF
+          (cd "$ROOT" && zip -q ../PanVK-Huawei-Kirin990-EXPERIMENTAL.zip libvulkan_panfrost.so meta.json)
+          sha256sum dist/PanVK-Huawei-Kirin990-EXPERIMENTAL.zip
+      - name: Upload experimental driver ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zenithblue-PanVK-Huawei-Kirin990-EXPERIMENTAL
+          path: dist/PanVK-Huawei-Kirin990-EXPERIMENTAL.zip
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zenithblue-Huawei-build-logs
+          path: |
+            build/**/meson-logs/
+            build/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7
