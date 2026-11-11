@@ -9,12 +9,20 @@ REPO="$(python3 -c "import json;print(json.load(open('$ROOT/sources.lock'))['mes
 COMMIT="$(python3 -c "import json;print(json.load(open('$ROOT/sources.lock'))['mesaCommit'])")"
 mkdir -p "$WORK"
 if [ ! -d "$MESA_DIR/.git" ]; then
-  git clone "$REPO" "$MESA_DIR"
+  # Initialize empty rather than clone an entire moving Mesa branch.
+  mkdir -p "$MESA_DIR"
+  git -C "$MESA_DIR" init -q
+  git -C "$MESA_DIR" remote add origin "$REPO"
 fi
-git -C "$MESA_DIR" fetch origin "$COMMIT" --depth 1
-git -C "$MESA_DIR" checkout --detach "$COMMIT"
+if ! git -C "$MESA_DIR" cat-file -e "$COMMIT^{commit}" 2>/dev/null; then
+  echo "H42: Mesa pinned commit not cached; fetching exactly $COMMIT"
+  timeout 150s git -C "$MESA_DIR" fetch --no-tags --depth 1 origin "$COMMIT"
+else
+  echo "H42: reusing pinned Mesa source from Actions cache (offline)"
+fi
+git -C "$MESA_DIR" checkout --detach --force "$COMMIT"
 git -C "$MESA_DIR" reset --hard "$COMMIT"
-git -C "$MESA_DIR" clean -fdq -- src/ meson.build meson.options || true
+# Prior jobs leave generated and copied patch files; never reuse these accidentally.
+git -C "$MESA_DIR" clean -ffdx
 git -C "$MESA_DIR" rev-parse HEAD
-git -C "$MESA_DIR" describe --tags 2>/dev/null || true
 echo "OK mesa=$COMMIT dir=$MESA_DIR"
