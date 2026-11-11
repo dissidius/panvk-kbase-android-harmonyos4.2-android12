@@ -54,4 +54,10 @@ for fam in $SERIES; do
     (cd "$ROOT/patches/$fam/files" && find . -type f ! -name README -print0 | tar --null -cf - -T -) | (cd "$MESA" && tar -xf -)
   fi
 done
+# The upstream CSF series includes MTK's 40-byte MEM_IMPORT fallback;
+# append the Huawei JM variant only after all common + arch patches apply.
+if [ "$PROFILE" = "g615-v11-csf" ]; then
+  python3 "$ROOT/scripts/apply-huawei-import32.py" \
+    "$MESA/src/panfrost/lib/kmod/kbase_kmod.c"
+fi
 echo "OK applied=$APPLIED profile=$PROFILE"
