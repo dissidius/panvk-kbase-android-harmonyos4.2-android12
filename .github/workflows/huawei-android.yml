@@ -32,7 +32,12 @@ jobs:
       # Avoid setup-android@v3: its legacy "sdkmanager tools" call fails on
       # newer SDK repositories because the obsolete "tools" package was removed.
       - name: Install Android NDK r29
-        run: sdkmanager --install 'ndk;29.0.14206865'
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -type f -name sdkmanager | sort -Vr | head -n 1)"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install 'ndk;29.0.14206865'
       - name: Fetch pinned Mesa and apply PanVK patches
         run: |
           set -euo pipefail
